@@ -120,6 +120,9 @@ class TestProvisioningToDataPreparation:
                 populations=["EUR"],
                 parallelism=10,
                 estimated_data_size_gb=0.1,
+                download_commands=[
+                    "tabix http://ftp.example.com/ALL.chr1.phase3.vcf.gz 1:1-100000 > /work_dir/ALL.chr1.250000.vcf"
+                ],
             ),
         )
 
@@ -154,7 +157,7 @@ class TestProvisioningToDataPreparation:
         assert provisioned_pod == "engine-pod-abc"
 
         # ── Phase 5: Data Preparation ───────────────────────────────────────
-        # exec_in_pod call 1: decompression → "", call 2: discovery → chr data
+        # exec_in_pod call 1: discovery → chr data, call 2: header extraction → ""
         discovery_output = "1:1234:ALL.chr1.250000.vcf:none"
         exec_calls: list[dict[str, Any]] = []
 
@@ -162,7 +165,7 @@ class TestProvisioningToDataPreparation:
             pod: str, _cmd: list[str], *, namespace: str, **kw: Any
         ) -> str:
             exec_calls.append({"pod": pod, "namespace": namespace})
-            return "" if len(exec_calls) == 1 else discovery_output
+            return discovery_output if len(exec_calls) == 1 else ""
 
         kubectl2 = _mock_kubectl(exec_in_pod=AsyncMock(side_effect=exec_side))
         with ExitStack() as stack:
@@ -224,7 +227,13 @@ class TestProvisioningToDataPreparation:
             engine_pod_name="engine-0",
             namespace="wf-ns",
             workflow_plan=WorkflowPlan(
-                chromosomes=["1", "2", "3"], populations=["EUR"]
+                chromosomes=["1", "2", "3"],
+                populations=["EUR"],
+                download_commands=[
+                    "tabix http://ftp.example.com/ALL.chr1.phase3.vcf.gz > /work_dir/ALL.chr1.250000.vcf",
+                    "tabix http://ftp.example.com/ALL.chr2.phase3.vcf.gz > /work_dir/ALL.chr2.250000.vcf",
+                    "tabix http://ftp.example.com/ALL.chr3.phase3.vcf.gz > /work_dir/ALL.chr3.250000.vcf",
+                ],
             ),
         )
         discovery = (
@@ -237,7 +246,7 @@ class TestProvisioningToDataPreparation:
         async def exec_side(_pod: str, _cmd: list[str], **kw: Any) -> str:
             nonlocal call_n
             call_n += 1
-            return "" if call_n == 1 else discovery
+            return discovery if call_n == 1 else ""
 
         kubectl = _mock_kubectl(exec_in_pod=AsyncMock(side_effect=exec_side))
         with ExitStack() as stack:
@@ -269,7 +278,14 @@ class TestProvisioningToDataPreparation:
         state = PipelineState(
             engine_pod_name="engine-0",
             namespace="wf-ns",
-            workflow_plan=WorkflowPlan(chromosomes=["1", "2"], populations=["EUR"]),
+            workflow_plan=WorkflowPlan(
+                chromosomes=["1", "2"],
+                populations=["EUR"],
+                download_commands=[
+                    "tabix http://ftp.example.com/ALL.chr1.phase3.vcf.gz > /work_dir/ALL.chr1.vcf",
+                    "tabix http://ftp.example.com/ALL.chr2.phase3.vcf.gz > /work_dir/ALL.chr2.vcf",
+                ],
+            ),
         )
         discovery = (
             "malformed-line\n"
@@ -282,7 +298,7 @@ class TestProvisioningToDataPreparation:
         async def exec_side(_pod: str, _cmd: list[str], **kw: Any) -> str:
             nonlocal call_n
             call_n += 1
-            return "" if call_n == 1 else discovery
+            return discovery if call_n == 1 else ""
 
         kubectl = _mock_kubectl(exec_in_pod=AsyncMock(side_effect=exec_side))
         with ExitStack() as stack:
