@@ -11,10 +11,12 @@ dependencies = [
     "pydantic-settings>=2.0",
     "pyyaml>=6.0",
     "execution-sentinel",
+    "execution-model-advisor",
 ]
 
 [tool.uv.sources]
 execution-sentinel = { git = "https://github.com/hyperflow-wms/execution-sentinel.git" }
+execution-model-advisor = { path = "../execution-model-advisor" }
 
 [project.optional-dependencies]
 google = ["mcp-agent[google]>=0.2.6"]

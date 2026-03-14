@@ -46,6 +46,7 @@ def display_phase_header(phase: PipelinePhase) -> None:
         PipelinePhase.PROVISIONING: "Phase 4: Provisioning",
         PipelinePhase.DATA_PREPARATION: "Phase 5: Data Preparation",
         PipelinePhase.GENERATION: "Phase 6: Generation",
+        PipelinePhase.EXECUTOR_SELECTION: "Phase 6b: Executor Selection",
         PipelinePhase.APPROVAL: "Phase 7: Approval (Gate 2)",
         PipelinePhase.DEPLOYMENT: "Phase 8: Deployment",
         PipelinePhase.MONITORING: "Phase 9: Monitoring",
@@ -209,6 +210,12 @@ _PHASE_EXPLANATIONS: dict[PipelinePhase, str] = {
         "The LLM calls the Workflow Composer to generate the full "
         "workflow.json — the HyperFlow DAG of processes and signals.\n"
         "Watch for: generate_workflow tool call."
+    ),
+    PipelinePhase.EXECUTOR_SELECTION: (
+        "Analyzes workflow.json metrics (task counts, homogeneity) and "
+        "selects the optimal HyperFlow execution model: JOB, "
+        "JOB_AGGLOMERATION, or WORKER_POOL. Generates workflow.config.json "
+        "if a non-default model is chosen."
     ),
     PipelinePhase.APPROVAL: (
         "Gate 2: shows an execution preview with real task counts and "

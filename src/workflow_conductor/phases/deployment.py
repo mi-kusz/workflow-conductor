@@ -115,8 +115,31 @@ async def run_deployment_phase(
             os.unlink(pop_path)
             logger.info("  Deployed %s", pop_name)
 
-    # Step 4: Signal engine to start
-    logger.info("Step 4: Signaling engine to start")
+    # Step 4: Write hyperflow.json if execution model requires it
+    if (
+        state.execution_model_recommendation
+        and state.execution_model_recommendation.hyperflow_config
+    ):
+        hf_config = state.execution_model_recommendation.hyperflow_config
+        logger.info("Step 4: Deploying workflow.config.json (model=%s)", state.execution_model_recommendation.model)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".json",
+            delete=False,
+        ) as f:
+            json.dump(hf_config, f)
+            hf_path = f.name
+        await kubectl.cp_to_pod(
+            hf_path,
+            state.engine_pod_name,
+            "/work_dir/workflow.config.json",
+            namespace=namespace,
+            container="hyperflow",
+        )
+        os.unlink(hf_path)
+
+    # Step 5: Signal engine to start
+    logger.info("Step 5: Signaling engine to start")
     await kubectl.exec_in_pod(
         state.engine_pod_name,
         ["touch", "/work_dir/.conductor-ready"],

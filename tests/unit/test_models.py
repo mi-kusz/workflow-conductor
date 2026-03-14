@@ -29,7 +29,7 @@ class TestEnums:
         assert PipelinePhase.GENERATION.value == "generation"
         assert PipelinePhase.APPROVAL.value == "approval"
         assert PipelinePhase.COMPLETION.value == "completion"
-        assert len(PipelinePhase) == 10
+        assert len(PipelinePhase) == 11
 
     def test_pipeline_status(self) -> None:
         assert PipelineStatus.PENDING.value == "pending"

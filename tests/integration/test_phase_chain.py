@@ -318,6 +318,135 @@ class TestProvisioningToDataPreparation:
 
 
 # ---------------------------------------------------------------------------
+# Executor Selection → Deployment
+# ---------------------------------------------------------------------------
+
+
+class TestExecutorSelectionToDeployment:
+    def _make_state(self, processes: list[dict]) -> PipelineState:
+        return PipelineState(
+            namespace="wf-test-ns",
+            cluster_ready=True,
+            engine_pod_name="engine-pod-0",
+            workflow_json={"processes": processes},
+            infrastructure=_mock_kubectl().get_nodes.return_value
+            if False
+            else None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_agglomeration_config_deployed_after_selection(self) -> None:
+        """ExecutorSelection → Deployment: workflow.config.json copied when agglomeration chosen."""
+        from workflow_conductor.phases.deployment import run_deployment_phase
+        from workflow_conductor.phases.executor_selection import run_executor_selection_phase
+
+        # 700 tasks of same type: should trigger JOB_AGGLOMERATION
+        processes = [{"name": "compute", "ins": [f"i{i}"], "outs": [f"o{i}"]} for i in range(700)]
+        state = PipelineState(
+            namespace="wf-test-ns",
+            cluster_ready=True,
+            engine_pod_name="engine-pod-0",
+            workflow_json={"processes": processes},
+            infrastructure=None,
+        )
+        settings = ConductorSettings()
+
+        # Phase: Executor Selection
+        with patch("workflow_conductor.phases.executor_selection.display_phase_header"):
+            state = await run_executor_selection_phase(state, settings)
+
+        assert state.execution_model_recommendation is not None
+        assert state.execution_model_recommendation.model.value == "JOB_AGGLOMERATION"
+
+        # Phase: Deployment — verify workflow.config.json is deployed
+        with patch("workflow_conductor.phases.deployment.Kubectl") as MockKubectl:
+            kubectl = MockKubectl.return_value
+            kubectl.cp_to_pod = AsyncMock()
+            kubectl.exec_in_pod = AsyncMock()
+            with patch("workflow_conductor.phases.deployment.display_phase_header"):
+                state = await run_deployment_phase(state, settings)
+
+        destinations = [call.args[2] for call in kubectl.cp_to_pod.call_args_list]
+        assert "/work_dir/workflow.config.json" in destinations
+        assert "/work_dir/workflow.json" in destinations
+
+    @pytest.mark.asyncio
+    async def test_worker_pool_config_deployed_after_selection(self) -> None:
+        """Very large homogeneous workflow: WORKER_POOL executionModels deployed."""
+        from workflow_conductor.phases.deployment import run_deployment_phase
+        from workflow_conductor.phases.executor_selection import run_executor_selection_phase
+
+        processes = (
+            [{"name": "individuals", "ins": [f"i{i}"], "outs": [f"o{i}"]} for i in range(2500)]
+            + [{"name": "merge", "ins": ["x"], "outs": ["y"]} for _ in range(160)]
+        )
+        state = PipelineState(
+            namespace="wf-test-ns",
+            cluster_ready=True,
+            engine_pod_name="engine-pod-0",
+            workflow_json={"processes": processes},
+            infrastructure=None,
+        )
+        settings = ConductorSettings()
+
+        with patch("workflow_conductor.phases.executor_selection.display_phase_header"):
+            state = await run_executor_selection_phase(state, settings)
+
+        assert state.execution_model_recommendation.model.value == "WORKER_POOL"  # type: ignore[union-attr]
+
+        import json
+
+        captured: dict[str, Any] = {}
+
+        async def cp_side(src: str, pod: str, dest: str, **kw: Any) -> None:
+            # Read file content before deployment.py deletes it
+            if dest == "/work_dir/workflow.config.json":
+                with open(src) as f:
+                    captured["config"] = json.load(f)
+
+        with patch("workflow_conductor.phases.deployment.Kubectl") as MockKubectl:
+            kubectl = MockKubectl.return_value
+            kubectl.cp_to_pod = AsyncMock(side_effect=cp_side)
+            kubectl.exec_in_pod = AsyncMock()
+            with patch("workflow_conductor.phases.deployment.display_phase_header"):
+                state = await run_deployment_phase(state, settings)
+
+        assert "config" in captured, "workflow.config.json was not deployed"
+        assert captured["config"] == {"executionModels": [{"name": "individuals"}]}
+
+    @pytest.mark.asyncio
+    async def test_job_model_skips_workflow_config(self) -> None:
+        """Small workflow: JOB model → no workflow.config.json deployed."""
+        from workflow_conductor.phases.deployment import run_deployment_phase
+        from workflow_conductor.phases.executor_selection import run_executor_selection_phase
+
+        processes = [{"name": "task", "ins": ["i"], "outs": ["o"]} for _ in range(30)]
+        state = PipelineState(
+            namespace="wf-test-ns",
+            cluster_ready=True,
+            engine_pod_name="engine-pod-0",
+            workflow_json={"processes": processes},
+            infrastructure=None,
+        )
+        settings = ConductorSettings()
+
+        with patch("workflow_conductor.phases.executor_selection.display_phase_header"):
+            state = await run_executor_selection_phase(state, settings)
+
+        assert state.execution_model_recommendation.model.value == "JOB"  # type: ignore[union-attr]
+
+        with patch("workflow_conductor.phases.deployment.Kubectl") as MockKubectl:
+            kubectl = MockKubectl.return_value
+            kubectl.cp_to_pod = AsyncMock()
+            kubectl.exec_in_pod = AsyncMock()
+            with patch("workflow_conductor.phases.deployment.display_phase_header"):
+                state = await run_deployment_phase(state, settings)
+
+        destinations = [call.args[2] for call in kubectl.cp_to_pod.call_args_list]
+        assert "/work_dir/workflow.config.json" not in destinations
+
+
+# ---------------------------------------------------------------------------
 # Monitoring → Completion state handoff
 # ---------------------------------------------------------------------------
 

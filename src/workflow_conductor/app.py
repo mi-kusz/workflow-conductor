@@ -23,6 +23,7 @@ from workflow_conductor.models import (
     PipelineStatus,
 )
 from workflow_conductor.phases.approval import run_approval_phase
+from workflow_conductor.phases.executor_selection import run_executor_selection_phase
 from workflow_conductor.phases.completion import run_completion_phase
 from workflow_conductor.phases.data_preparation import run_data_preparation_phase
 from workflow_conductor.phases.deployment import run_deployment_phase
@@ -221,6 +222,18 @@ async def run_pipeline(
         )
         if demo and state.workflow_json:
             display_workflow_json_summary(state.workflow_json)
+        if demo:
+            demo_pause()
+
+        # Phase 6b: Executor Selection
+        if demo:
+            display_phase_explanation(PipelinePhase.EXECUTOR_SELECTION)
+        state = await _run_phase(
+            PipelinePhase.EXECUTOR_SELECTION,
+            state,
+            run_executor_selection_phase,
+            settings,
+        )
         if demo:
             demo_pause()
 

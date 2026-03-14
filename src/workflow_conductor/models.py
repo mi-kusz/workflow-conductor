@@ -12,6 +12,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from execution_model_advisor.models import ExecutionModelRecommendation
+
 
 class PipelinePhase(StrEnum):
     """Pipeline phases — 10-phase architecture.
@@ -26,6 +28,7 @@ class PipelinePhase(StrEnum):
     PROVISIONING = "provisioning"
     DATA_PREPARATION = "data_preparation"
     GENERATION = "generation"
+    EXECUTOR_SELECTION = "executor_selection"
     APPROVAL = "approval"
     DEPLOYMENT = "deployment"
     MONITORING = "monitoring"
@@ -187,6 +190,7 @@ class PipelineState(BaseModel):
     chromosome_data: list[ChromosomeData] = Field(default_factory=list)
     workflow_json: dict[str, Any] | None = None
     workflow_json_path: str = ""
+    execution_model_recommendation: ExecutionModelRecommendation | None = None
     execution_summary: ExecutionSummary | None = None
 
     # Phase-specific fields

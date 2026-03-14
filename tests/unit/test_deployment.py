@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from execution_model_advisor import Advisor
+
 from workflow_conductor.config import ConductorSettings
 from workflow_conductor.models import (
     InfrastructureMeasurements,
@@ -175,3 +177,123 @@ class TestDeploymentPhase:
         assert "/work_dir/columns.txt" in destinations
         assert "/work_dir/GBR" in destinations
         assert "/work_dir/FIN" in destinations
+
+
+class TestDeploymentWithExecutionModel:
+    def _make_large_workflow(self) -> dict:
+        processes = [{"name": "individuals", "ins": [f"in{i}"], "outs": [f"out{i}"]} for i in range(2500)]
+        processes += [{"name": "merge", "ins": ["x"], "outs": ["y"]} for _ in range(160)]
+        return {"processes": processes}
+
+    @pytest.mark.asyncio
+    async def test_deploys_workflow_config_json_for_agglomeration(self) -> None:
+        from workflow_conductor.phases.deployment import run_deployment_phase
+
+        wf = {"processes": [{"name": "task", "ins": [f"i{i}"], "outs": [f"o{i}"]} for i in range(700)]}
+        rec = Advisor.analyze(wf, available_vcpus=4)
+        assert rec.model.value == "JOB_AGGLOMERATION"
+
+        state = _make_state(
+            workflow_json=wf,
+            execution_model_recommendation=rec,
+        )
+        settings = ConductorSettings(kubernetes={"cluster_provider": "existing"})
+
+        with patch("workflow_conductor.phases.deployment.Kubectl") as MockKubectl:
+            kubectl = MockKubectl.return_value
+            kubectl.cp_to_pod = AsyncMock()
+            kubectl.exec_in_pod = AsyncMock()
+
+            await run_deployment_phase(state, settings)
+
+        destinations = [call.args[2] for call in kubectl.cp_to_pod.call_args_list]
+        assert "/work_dir/workflow.config.json" in destinations
+        assert "/work_dir/workflow.json" in destinations
+
+    @pytest.mark.asyncio
+    async def test_deploys_workflow_config_json_for_worker_pool(self) -> None:
+        from workflow_conductor.phases.deployment import run_deployment_phase
+
+        wf = self._make_large_workflow()
+        rec = Advisor.analyze(wf, available_vcpus=4)
+        assert rec.model.value == "WORKER_POOL"
+
+        state = _make_state(workflow_json=wf, execution_model_recommendation=rec)
+        settings = ConductorSettings(kubernetes={"cluster_provider": "existing"})
+
+        with patch("workflow_conductor.phases.deployment.Kubectl") as MockKubectl:
+            kubectl = MockKubectl.return_value
+            kubectl.cp_to_pod = AsyncMock()
+            kubectl.exec_in_pod = AsyncMock()
+
+            await run_deployment_phase(state, settings)
+
+        destinations = [call.args[2] for call in kubectl.cp_to_pod.call_args_list]
+        assert "/work_dir/workflow.config.json" in destinations
+
+    @pytest.mark.asyncio
+    async def test_no_workflow_config_json_for_job_model(self) -> None:
+        from workflow_conductor.phases.deployment import run_deployment_phase
+
+        wf = {"processes": [{"name": "task", "ins": ["i"], "outs": ["o"]} for _ in range(50)]}
+        rec = Advisor.analyze(wf, available_vcpus=4)
+        assert rec.model.value == "JOB"
+
+        state = _make_state(workflow_json=wf, execution_model_recommendation=rec)
+        settings = ConductorSettings(kubernetes={"cluster_provider": "existing"})
+
+        with patch("workflow_conductor.phases.deployment.Kubectl") as MockKubectl:
+            kubectl = MockKubectl.return_value
+            kubectl.cp_to_pod = AsyncMock()
+            kubectl.exec_in_pod = AsyncMock()
+
+            await run_deployment_phase(state, settings)
+
+        destinations = [call.args[2] for call in kubectl.cp_to_pod.call_args_list]
+        assert "/work_dir/workflow.config.json" not in destinations
+
+    @pytest.mark.asyncio
+    async def test_no_workflow_config_json_when_no_recommendation(self) -> None:
+        from workflow_conductor.phases.deployment import run_deployment_phase
+
+        state = _make_state(execution_model_recommendation=None)
+        settings = ConductorSettings(kubernetes={"cluster_provider": "existing"})
+
+        with patch("workflow_conductor.phases.deployment.Kubectl") as MockKubectl:
+            kubectl = MockKubectl.return_value
+            kubectl.cp_to_pod = AsyncMock()
+            kubectl.exec_in_pod = AsyncMock()
+
+            await run_deployment_phase(state, settings)
+
+        destinations = [call.args[2] for call in kubectl.cp_to_pod.call_args_list]
+        assert "/work_dir/workflow.config.json" not in destinations
+
+    @pytest.mark.asyncio
+    async def test_workflow_config_json_deployed_before_signal(self) -> None:
+        """workflow.config.json must be copied before .conductor-ready is touched."""
+        from workflow_conductor.phases.deployment import run_deployment_phase
+
+        wf = {"processes": [{"name": "task", "ins": [f"i{i}"], "outs": [f"o{i}"]} for i in range(700)]}
+        rec = Advisor.analyze(wf, available_vcpus=4)
+        call_order: list[str] = []
+
+        state = _make_state(workflow_json=wf, execution_model_recommendation=rec)
+        settings = ConductorSettings(kubernetes={"cluster_provider": "existing"})
+
+        async def cp_side(src: str, pod: str, dest: str, **kw: object) -> None:
+            call_order.append(f"cp:{dest}")
+
+        async def exec_side(pod: str, cmd: list[str], **kw: object) -> str:
+            call_order.append(f"exec:{cmd[0]}")
+            return ""
+
+        with patch("workflow_conductor.phases.deployment.Kubectl") as MockKubectl:
+            kubectl = MockKubectl.return_value
+            kubectl.cp_to_pod = AsyncMock(side_effect=cp_side)
+            kubectl.exec_in_pod = AsyncMock(side_effect=exec_side)
+            await run_deployment_phase(state, settings)
+
+        config_idx = next(i for i, e in enumerate(call_order) if "workflow.config.json" in e)
+        signal_idx = next(i for i, e in enumerate(call_order) if "touch" in e)
+        assert config_idx < signal_idx
