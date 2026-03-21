@@ -224,6 +224,10 @@ class PipelineState(BaseModel):
     # Execution time estimate (filled by estimation phase after executor_selection)
     estimated_duration_seconds: float = 0.0
 
+    # Estimation accuracy (filled after monitoring completes)
+    # Keys: estimated_s, actual_s, error_pct
+    estimation_accuracy: dict[str, float] = Field(default_factory=dict)
+
     # Experiment data capture (for paper reporting)
     llm_usage: dict[str, Any] = Field(default_factory=dict)
     planning_estimates: dict[str, Any] = Field(default_factory=dict)

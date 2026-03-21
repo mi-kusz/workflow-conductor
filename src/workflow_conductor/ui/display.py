@@ -104,6 +104,15 @@ def display_completion_summary(state: PipelineState) -> None:
         for phase_name, duration in state.phase_timings.items():
             table.add_row(f"  {phase_name}", f"{duration:.1f}s")
 
+    if state.estimation_accuracy:
+        acc = state.estimation_accuracy
+        sign = "+" if acc["error_pct"] >= 0 else ""
+        table.add_row(
+            "Est. Accuracy",
+            f"{sign}{acc['error_pct']:.1f}%  "
+            f"(pred {acc['estimated_s']:.0f}s / actual {acc['actual_s']:.0f}s)",
+        )
+
     console.print(Panel(table, border_style="blue"))
 
 

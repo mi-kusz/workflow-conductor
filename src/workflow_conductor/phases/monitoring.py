@@ -315,6 +315,25 @@ async def run_monitoring_phase(
     if monitoring_llm_usage["api_calls"] > 0:
         state.llm_usage["monitoring"] = dict(monitoring_llm_usage)
 
+    # Estimation accuracy: compare predicted vs actual duration
+    if state.estimated_duration_seconds > 0 and summary.duration_seconds > 0:
+        error_pct = (
+            (summary.duration_seconds - state.estimated_duration_seconds)
+            / state.estimated_duration_seconds
+            * 100
+        )
+        state.estimation_accuracy = {
+            "estimated_s": state.estimated_duration_seconds,
+            "actual_s": summary.duration_seconds,
+            "error_pct": error_pct,
+        }
+        logger.info(
+            "Estimation accuracy: predicted=%.0fs actual=%.0fs error=%+.1f%%",
+            state.estimated_duration_seconds,
+            summary.duration_seconds,
+            error_pct,
+        )
+
     # Capture engine logs via sentinel's kubectl client
     try:
         logs = await sentinel.kubectl.logs(
