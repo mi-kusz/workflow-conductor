@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING
 from execution_model_advisor import Advisor
 
 from workflow_conductor.models import PipelinePhase, PipelineState
-from workflow_conductor.ui.display import display_phase_header
+from workflow_conductor.phases.estimation import estimate_execution_time
+from workflow_conductor.ui.display import display_phase_header, display_time_estimate
 
 if TYPE_CHECKING:
     from workflow_conductor.config import ConductorSettings
@@ -45,5 +46,14 @@ async def run_executor_selection_phase(
     )
     if recommendation.hyperflow_config:
         logger.info("workflow.config.json will be deployed: %s", recommendation.hyperflow_config)
+
+    state.estimated_duration_seconds = estimate_execution_time(state)
+    if state.estimated_duration_seconds > 0:
+        agg_factor = (
+            recommendation.agglomeration_configs[0].size
+            if recommendation.agglomeration_configs
+            else 1
+        )
+        display_time_estimate(state.estimated_duration_seconds, recommendation.model, agg_factor)
 
     return state

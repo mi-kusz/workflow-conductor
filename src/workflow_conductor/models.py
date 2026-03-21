@@ -221,6 +221,9 @@ class PipelineState(BaseModel):
     planner_history: list[dict[str, Any]] = Field(default_factory=list)
     phase_timings: dict[str, float] = Field(default_factory=dict)
 
+    # Execution time estimate (filled by estimation phase after executor_selection)
+    estimated_duration_seconds: float = 0.0
+
     # Experiment data capture (for paper reporting)
     llm_usage: dict[str, Any] = Field(default_factory=dict)
     planning_estimates: dict[str, Any] = Field(default_factory=dict)

@@ -172,6 +172,25 @@ def display_execution_preview(state: PipelineState) -> None:
     )
 
 
+def display_time_estimate(
+    estimated_seconds: float,
+    model: object,
+    agg_factor: int,
+) -> None:
+    """Display execution time estimate produced by the estimation phase."""
+    mins = estimated_seconds / 60
+    model_str = str(model)
+    agg_str = f" (agg×{agg_factor})" if agg_factor > 1 else ""
+    console.print(
+        Panel(
+            f"[bold]{mins:.0f} min[/bold]  [dim]({estimated_seconds:.0f}s)[/dim]\n"
+            f"[dim]Model: {model_str}{agg_str}[/dim]",
+            title="[bold green]Estimated Execution Time[/bold green]",
+            border_style="green",
+        )
+    )
+
+
 def display_error(message: str, *, phase: str = "") -> None:
     """Display an error message."""
     prefix = f"\\[{phase}] " if phase else ""
