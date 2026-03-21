@@ -23,6 +23,7 @@ def _make_summary(
     exit_code: int | None = None,
     timed_out: bool = False,
     mass_failure: bool = False,
+    duration_seconds: float = 0.0,
 ) -> WatchSummary:
     from execution_sentinel.models import WatchSummary
 
@@ -33,6 +34,7 @@ def _make_summary(
         exit_code=exit_code,
         timed_out=timed_out,
         mass_failure=mass_failure,
+        duration_seconds=duration_seconds,
     )
 
 
@@ -531,3 +533,82 @@ class TestClusterSnapshots:
         snapshot = await _capture_cluster_snapshot(mock_kubectl, "test-ns")
         assert snapshot["nodes"] == ""
         assert snapshot["pods"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Test: estimation accuracy
+# ---------------------------------------------------------------------------
+
+
+class TestEstimationAccuracy:
+    @pytest.mark.asyncio
+    async def test_accuracy_populated_after_monitoring(self) -> None:
+        """estimation_accuracy is filled when both estimated and actual durations are known."""
+        from workflow_conductor.phases.monitoring import run_monitoring_phase
+
+        summary = _make_summary(completed=10, total=10, exit_code=0, duration_seconds=120.0)
+        sentinel_mock = _make_sentinel_mock(summary)
+
+        state = PipelineState(
+            engine_pod_name="engine-0",
+            namespace="test-ns",
+            estimated_duration_seconds=100.0,  # predicted 100s
+        )
+        settings = ConductorSettings()
+
+        patches = _DISPLAY_PATCHES + [
+            "workflow_conductor.phases.monitoring.Sentinel",
+            "workflow_conductor.phases.monitoring._translate_to_nl",
+        ]
+        with ExitStack() as stack:
+            mocks = [stack.enter_context(patch(p)) for p in patches]
+            mocks[-2].return_value = sentinel_mock
+            mocks[-1] = stack.enter_context(
+                patch(
+                    "workflow_conductor.phases.monitoring._translate_to_nl",
+                    new_callable=AsyncMock,
+                    return_value=("translated", {}),
+                )
+            )
+            result = await run_monitoring_phase(state, settings)
+
+        assert "estimated_s" in result.estimation_accuracy
+        assert "actual_s" in result.estimation_accuracy
+        assert "error_pct" in result.estimation_accuracy
+        assert result.estimation_accuracy["estimated_s"] == pytest.approx(100.0)
+        assert result.estimation_accuracy["actual_s"] == pytest.approx(120.0)
+        # error = (120 - 100) / 100 * 100 = +20%
+        assert result.estimation_accuracy["error_pct"] == pytest.approx(20.0)
+
+    @pytest.mark.asyncio
+    async def test_accuracy_not_populated_when_no_estimate(self) -> None:
+        """estimation_accuracy is empty when no estimate was made."""
+        from workflow_conductor.phases.monitoring import run_monitoring_phase
+
+        summary = _make_summary(completed=5, total=5, exit_code=0, duration_seconds=60.0)
+        sentinel_mock = _make_sentinel_mock(summary)
+
+        state = PipelineState(
+            engine_pod_name="engine-0",
+            namespace="test-ns",
+            estimated_duration_seconds=0.0,  # no estimate
+        )
+        settings = ConductorSettings()
+
+        patches = _DISPLAY_PATCHES + [
+            "workflow_conductor.phases.monitoring.Sentinel",
+            "workflow_conductor.phases.monitoring._translate_to_nl",
+        ]
+        with ExitStack() as stack:
+            mocks = [stack.enter_context(patch(p)) for p in patches]
+            mocks[-2].return_value = sentinel_mock
+            mocks[-1] = stack.enter_context(
+                patch(
+                    "workflow_conductor.phases.monitoring._translate_to_nl",
+                    new_callable=AsyncMock,
+                    return_value=("translated", {}),
+                )
+            )
+            result = await run_monitoring_phase(state, settings)
+
+        assert result.estimation_accuracy == {}
