@@ -35,7 +35,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Known 1000 Genomes task ordering and default durations
+# Known 1000 Genomes task ordering and dependency structure.
+# Used as primary source of dag_order; dynamic computation is the fallback.
 _1000G_TASK_ORDER: dict[str, int] = {
     "individuals": 0,
     "individuals_merge": 1,
@@ -50,6 +51,9 @@ _1000G_TASK_DEPS: dict[str, list[str]] = {
     "mutation_overlap": ["sifting"],
     "frequency": ["sifting"],
 }
+
+# Fallback durations for 1000 Genomes task types (seconds).
+# Used only when the profiler has not supplied measured values.
 _1000G_DEFAULT_DURATIONS: dict[str, float] = {
     "individuals": 30.0,
     "individuals_merge": 10.0,
@@ -59,13 +63,78 @@ _1000G_DEFAULT_DURATIONS: dict[str, float] = {
 }
 
 
+def _dag_order_from_workflow(processes: list[dict]) -> dict[str, int]:
+    """Compute a topological dag_order (depth) for each task type from workflow.json.
+
+    Signals in ``outs`` of process A matched against ``ins`` of process B give
+    edge A → B.  The returned dict maps task type (``fun`` field) → depth
+    (0-based), so earlier phases get lower numbers.
+    """
+    n = len(processes)
+    if n == 0:
+        return {}
+
+    signal_to_producer: dict[str, int] = {}
+    for i, p in enumerate(processes):
+        for sig in p.get("outs", []):
+            if isinstance(sig, str):
+                signal_to_producer[sig] = i
+
+    from collections import deque
+    children: list[list[int]] = [[] for _ in range(n)]
+    in_degree: list[int] = [0] * n
+    for i, p in enumerate(processes):
+        for sig in p.get("ins", []):
+            if isinstance(sig, str) and sig in signal_to_producer:
+                parent = signal_to_producer[sig]
+                if parent != i:
+                    children[parent].append(i)
+                    in_degree[i] += 1
+
+    depth = [0] * n
+    queue: deque[int] = deque(i for i in range(n) if in_degree[i] == 0)
+    while queue:
+        node = queue.popleft()
+        for child in children[node]:
+            depth[child] = max(depth[child], depth[node] + 1)
+            in_degree[child] -= 1
+            if in_degree[child] == 0:
+                queue.append(child)
+
+    # Map task type → minimum depth seen for that type
+    type_depth: dict[str, int] = {}
+    for i, p in enumerate(processes):
+        t = p.get("fun", "")
+        if t and (t not in type_depth or depth[i] < type_depth[t]):
+            type_depth[t] = depth[i]
+    return type_depth
+
+
 def _build_monitoring_context(state: PipelineState) -> MonitoringContext:
+    processes = list((state.workflow_json or {}).get("processes", []))
     profile_by_type = {p.task_type: p for p in state.resource_profiles}
+
+    # Compute dag_order dynamically; fall back to flat ordering if signals are
+    # not connected (all processes at depth 0 → use insertion order by type).
+    dynamic_order = _dag_order_from_workflow(processes)
+
+    # If the dynamic computation yielded no useful spread (all zeros), derive
+    # ordering from the first occurrence of each task type.
+    if len(set(dynamic_order.values())) <= 1 and len(dynamic_order) > 1:
+        seen: dict[str, int] = {}
+        counter = 0
+        for p in processes:
+            t = p.get("fun", "")
+            if t and t not in seen:
+                seen[t] = counter
+                counter += 1
+        dynamic_order = seen
+
     task_inventory = []
-    for proc in (state.workflow_json or {}).get("processes", []):
+    for proc in processes:
         task_type = proc.get("fun", "")
         profile = profile_by_type.get(task_type)
-        dag_order = _1000G_TASK_ORDER.get(task_type, 99)
+        dag_order = _1000G_TASK_ORDER.get(task_type, dynamic_order.get(task_type, 99))
         expected_duration = (
             profile.expected_duration_seconds
             if (profile and profile.expected_duration_seconds > 0)
@@ -81,12 +150,24 @@ def _build_monitoring_context(state: PipelineState) -> MonitoringContext:
                 expected_duration_seconds=expected_duration,
             )
         )
+
+    # Extract agglomeration_factor and execution_model from advisor recommendation
+    rec = state.execution_model_recommendation
+    agglomeration_factor = 1
+    execution_model = "JOB"
+    if rec is not None:
+        execution_model = rec.model.value
+        if rec.agglomeration_configs:
+            agglomeration_factor = rec.agglomeration_configs[0].size
+
     return MonitoringContext(
         namespace=state.namespace,
         engine_pod_name=state.engine_pod_name,
         engine_container="hyperflow",
         task_inventory=task_inventory,
         dag_structure=_1000G_TASK_DEPS,
+        agglomeration_factor=agglomeration_factor,
+        execution_model=execution_model,
     )
 
 

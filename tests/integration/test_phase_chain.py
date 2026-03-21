@@ -371,8 +371,8 @@ class TestExecutorSelectionToDeployment:
         assert "/work_dir/workflow.json" in destinations
 
     @pytest.mark.asyncio
-    async def test_worker_pool_config_deployed_after_selection(self) -> None:
-        """Very large homogeneous workflow: WORKER_POOL executionModels deployed."""
+    async def test_large_agglomeration_config_deployed_after_selection(self) -> None:
+        """Very large homogeneous workflow: JOB_AGGLOMERATION config deployed."""
         from workflow_conductor.phases.deployment import run_deployment_phase
         from workflow_conductor.phases.executor_selection import run_executor_selection_phase
 
@@ -392,7 +392,7 @@ class TestExecutorSelectionToDeployment:
         with patch("workflow_conductor.phases.executor_selection.display_phase_header"):
             state = await run_executor_selection_phase(state, settings)
 
-        assert state.execution_model_recommendation.model.value == "WORKER_POOL"  # type: ignore[union-attr]
+        assert state.execution_model_recommendation.model.value == "JOB_AGGLOMERATION"  # type: ignore[union-attr]
 
         import json
 
@@ -412,7 +412,8 @@ class TestExecutorSelectionToDeployment:
                 state = await run_deployment_phase(state, settings)
 
         assert "config" in captured, "workflow.config.json was not deployed"
-        assert captured["config"] == {"executionModels": [{"name": "individuals"}]}
+        assert "jobAgglomerations" in captured["config"]
+        assert captured["config"]["jobAgglomerations"][0]["matchTask"] == ["individuals"]
 
     @pytest.mark.asyncio
     async def test_job_model_skips_workflow_config(self) -> None:

@@ -211,12 +211,12 @@ class TestDeploymentWithExecutionModel:
         assert "/work_dir/workflow.json" in destinations
 
     @pytest.mark.asyncio
-    async def test_deploys_workflow_config_json_for_worker_pool(self) -> None:
+    async def test_deploys_workflow_config_json_for_large_agglomeration(self) -> None:
         from workflow_conductor.phases.deployment import run_deployment_phase
 
         wf = self._make_large_workflow()
         rec = Advisor.analyze(wf, available_vcpus=4)
-        assert rec.model.value == "WORKER_POOL"
+        assert rec.model.value == "JOB_AGGLOMERATION"
 
         state = _make_state(workflow_json=wf, execution_model_recommendation=rec)
         settings = ConductorSettings(kubernetes={"cluster_provider": "existing"})

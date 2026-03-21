@@ -39,7 +39,7 @@ class TestExecutorSelectionPhase:
         assert result.execution_model_recommendation.hyperflow_config == {}
 
     @pytest.mark.asyncio
-    async def test_large_homogeneous_selects_worker_pool(self) -> None:
+    async def test_large_homogeneous_selects_agglomeration(self) -> None:
         from workflow_conductor.phases.executor_selection import run_executor_selection_phase
 
         state = PipelineState(
@@ -51,8 +51,8 @@ class TestExecutorSelectionPhase:
 
         rec = result.execution_model_recommendation
         assert rec is not None
-        assert rec.model.value == "WORKER_POOL"
-        assert rec.hyperflow_config == {"executionModels": [{"name": "individuals"}]}
+        assert rec.model.value == "JOB_AGGLOMERATION"
+        assert rec.hyperflow_config["jobAgglomerations"][0]["matchTask"] == ["individuals"]
 
     @pytest.mark.asyncio
     async def test_medium_large_selects_agglomeration(self) -> None:

@@ -279,13 +279,28 @@ class TestBuildMonitoringContext:
         assert by_type["sifting"] == 2
         assert by_type["frequency"] == 4
 
-    def test_unknown_task_type_gets_order_99(self) -> None:
+    def test_unknown_task_type_gets_dynamic_order(self) -> None:
+        """Unknown task types fall back to dag_order computed from signal topology.
+        A single disconnected process has depth 0."""
         from workflow_conductor.phases.monitoring import _build_monitoring_context
 
         state = PipelineState(
             namespace="test-ns",
             engine_pod_name="engine-0",
             workflow_json={"processes": [{"name": "custom-0", "fun": "custom_task"}]},
+        )
+        ctx = _build_monitoring_context(state)
+        # Not in _1000G_TASK_ORDER → dynamic order (0 for a standalone process)
+        assert ctx.task_inventory[0].dag_order == 0
+
+    def test_unknown_task_type_with_no_fun_gets_order_99(self) -> None:
+        """Process with missing/empty 'fun' field cannot be resolved → dag_order 99."""
+        from workflow_conductor.phases.monitoring import _build_monitoring_context
+
+        state = PipelineState(
+            namespace="test-ns",
+            engine_pod_name="engine-0",
+            workflow_json={"processes": [{"name": "custom-0", "fun": ""}]},
         )
         ctx = _build_monitoring_context(state)
         assert ctx.task_inventory[0].dag_order == 99
@@ -358,6 +373,42 @@ class TestBuildMonitoringContext:
         state = PipelineState(namespace="test-ns", engine_pod_name="engine-0")
         ctx = _build_monitoring_context(state)
         assert ctx.task_inventory == []
+
+    def test_agglomeration_factor_from_recommendation(self) -> None:
+        """agglomeration_factor is taken from the first AgglomerationConfig.size."""
+        from execution_model_advisor import Advisor
+
+        from workflow_conductor.phases.monitoring import _build_monitoring_context
+
+        # Build a workflow large enough to trigger JOB_AGGLOMERATION.
+        # Advisor groups by "name" field, so all 1000 processes must share the same name.
+        wf = {
+            "processes": [
+                {"name": "sifting", "fun": "sifting", "ins": [], "outs": []}
+                for _ in range(1000)
+            ]
+        }
+        rec = Advisor.analyze(wf, available_vcpus=4)
+        assert rec.agglomeration_configs, "expected agglomeration recommendation"
+
+        state = PipelineState(
+            namespace="test-ns",
+            engine_pod_name="engine-0",
+            workflow_json=wf,
+            execution_model_recommendation=rec,
+        )
+        ctx = _build_monitoring_context(state)
+        assert ctx.agglomeration_factor == rec.agglomeration_configs[0].size
+        assert ctx.execution_model == rec.model.value
+
+    def test_agglomeration_factor_default_when_no_recommendation(self) -> None:
+        """Without an advisor recommendation agglomeration_factor defaults to 1."""
+        from workflow_conductor.phases.monitoring import _build_monitoring_context
+
+        state = PipelineState(namespace="test-ns", engine_pod_name="engine-0")
+        ctx = _build_monitoring_context(state)
+        assert ctx.agglomeration_factor == 1
+        assert ctx.execution_model == "JOB"
 
 
 # ---------------------------------------------------------------------------
